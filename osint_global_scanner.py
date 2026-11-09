@@ -393,8 +393,8 @@ class PassiveReconGlobal:
                             "type": e.get("type", "N/D")
                         })
                     result_data["emails"] = formatted_emails
-        except Exception:
-            pass
+        except Exception as ex:
+            print("Errore Hunter:", ex)
         return result_data
 
     @staticmethod
@@ -460,147 +460,144 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
             email_sec = PassiveReconGlobal.analyze_email_security(dns_info["txt"], dmarc_check)
             iot_devices = PassiveReconGlobal.search_shodan_iot_devices(clean_domain, SHODAN_API_KEY)
 
-        if not subdomain_records and not dns_info["mx"]:
-            st.error(f"❌ Impossibile raccogliere dati pubblici per `{clean_domain}`. Verifica il nome del dominio.")
+        with st.spinner(f"Fase 2/2: Interrogazione Hunter.io per `{clean_domain}`..."):
+            hunter_data = PassiveReconGlobal.get_hunter_domain_search(clean_domain, HUNTER_API_KEY)
+            company_data = PassiveReconGlobal.get_hunter_companies_find(clean_domain, HUNTER_API_KEY)
+            unified_email_table = hunter_data.get("emails", [])
+
+        st.session_state.history[clean_domain] = {
+            "dns": dns_info, "email_sec": email_sec, "dmarc": dmarc_check,
+            "subdomains": subdomain_records, "iot": iot_devices, "contacts": unified_email_table
+        }
+
+        st.success(f"✅ Analisi completata per il dominio: `{clean_domain}`!")
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Target Domain", clean_domain)
+        col2.metric("Sottodomini", len(subdomain_records))
+        col3.metric("Email Trovate", len(unified_email_table))
+        col4.metric("MX Record", len(dns_info["mx"]))
+
+        st.divider()
+
+        # --- FASE 1: DATI PUBBLICI E EMAIL ---
+        st.subheader("🌐 Fase 1: Ricognizione & Sicurezza Email")
+        st.markdown("**Server MX:**")
+        if dns_info["mx"]:
+            for mx in dns_info["mx"]:
+                st.code(mx, language="text")
         else:
-            with st.spinner(f"Fase 2/2: Interrogazione Hunter.io per `{clean_domain}`..."):
-                hunter_data = PassiveReconGlobal.get_hunter_domain_search(clean_domain, HUNTER_API_KEY)
-                company_data = PassiveReconGlobal.get_hunter_companies_find(clean_domain, HUNTER_API_KEY)
-                unified_email_table = hunter_data.get("emails", [])
+            st.info("Nessun MX trovato.")
 
-            st.session_state.history[clean_domain] = {
-                "dns": dns_info, "email_sec": email_sec, "dmarc": dmarc_check,
-                "subdomains": subdomain_records, "iot": iot_devices, "contacts": unified_email_table
-            }
-
-            st.success(f"✅ Analisi completata per il dominio: `{clean_domain}`!")
-
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Target Domain", clean_domain)
-            col2.metric("Sottodomini", len(subdomain_records))
-            col3.metric("Email Trovate", len(unified_email_table))
-            col4.metric("MX Record", len(dns_info["mx"]))
-
-            st.divider()
-
-            # --- FASE 1: DATI PUBBLICI E EMAIL ---
-            st.subheader("🌐 Fase 1: Ricognizione & Sicurezza Email")
-            st.markdown("**Server MX:**")
-            if dns_info["mx"]:
-                for mx in dns_info["mx"]:
-                    st.code(mx, language="text")
+        ec1, ec2 = st.columns(2)
+        with ec1:
+            st.markdown("##### SPF")
+            if "correttamente" in email_sec["SPF"]:
+                st.success(email_sec["SPF"])
             else:
-                st.info("Nessun MX trovato.")
-
-            ec1, ec2 = st.columns(2)
-            with ec1:
-                st.markdown("##### SPF")
-                if "correttamente" in email_sec["SPF"]:
-                    st.success(email_sec["SPF"])
-                else:
-                    st.warning(email_sec["SPF"])
-            with ec2:
-                st.markdown("##### DMARC")
-                if "correttamente" in email_sec["DMARC"]:
-                    st.success(f"{email_sec['DMARC']} — **Policy:** {dmarc_check['policy']}")
-                else:
-                    st.error(email_sec["DMARC"])
-
-            st.divider()
-
-            # --- DISPOSITIVI IOT ---
-            st.subheader("🤖 IoT & Asset (Shodan)")
-            if iot_devices:
-                st.dataframe(iot_devices, use_container_width=True)
+                st.warning(email_sec["SPF"])
+        with ec2:
+            st.markdown("##### DMARC")
+            if "correttamente" in email_sec["DMARC"]:
+                st.success(f"{email_sec['DMARC']} — **Policy:** {dmarc_check['policy']}")
             else:
-                st.info("Nessun asset IoT o dispositivo indicizzato trovato per questo dominio.")
+                st.error(email_sec["DMARC"])
 
-            st.divider()
+        st.divider()
 
-            # --- INTELLIGENCE HUNTER.IO ---
-            st.subheader("🕵️‍♂️ Contatti & Social (Hunter.io)")
-            if HUNTER_API_KEY:
-                if company_data:
-                    cc1, cc2, cc3, cc4 = st.columns(4)
-                    cc1.metric("Azienda", company_data.get("name", "N/D"))
-                    cc2.metric("Settore", company_data.get("industry", "N/D"))
-                    cc3.metric("Staff", company_data.get("employees", "N/D"))
-                    cc4.metric("Paese", company_data.get("country", "N/D"))
+        # --- DISPOSITIVI IOT ---
+        st.subheader("🤖 IoT & Asset (Shodan)")
+        if iot_devices:
+            st.dataframe(iot_devices, use_container_width=True)
+        else:
+            st.info("Nessun asset IoT o dispositivo indicizzato trovato per questo dominio.")
 
-                if unified_email_table:
-                    st.dataframe(unified_email_table, use_container_width=True)
-                else:
-                    st.warning("Nessuna email restituita per questo dominio (verifica i crediti disponibili o la presenza di dati pubblici).")
+        st.divider()
 
-            st.divider()
-
-            # --- GOOGLE DORKING AVANZATO RESPONSIVE ---
-            st.subheader("🔎 Google Dorking Avanzato (Mobile Friendly)")
-            st.markdown(f"Query mirate per il dominio: `{clean_domain}`")
-
-            domain_parts = clean_domain.split('.')
-            brand_query = domain_parts[0] if len(domain_parts) <= 2 else f"{domain_parts[0]} {domain_parts[1]}"
+        # --- INTELLIGENCE HUNTER.IO ---
+        st.subheader("🕵️‍♂️ Contatti & Social (Hunter.io)")
+        if HUNTER_API_KEY:
+            if company_data:
+                cc1, cc2, cc3, cc4 = st.columns(4)
+                cc1.metric("Azienda", company_data.get("name", "N/D"))
+                cc2.metric("Settore", company_data.get("industry", "N/D"))
+                cc3.metric("Staff", company_data.get("employees", "N/D"))
+                cc4.metric("Paese", company_data.get("country", "N/D"))
 
             if unified_email_table:
-                for idx, contact in enumerate(unified_email_table, 1):
-                    emp_name = contact.get("nome-cognome", "N/D")
-                    emp_pos = contact.get("posizione", "N/D")
-                    emp_mail = contact.get("mail", "N/D")
-
-                    if emp_name != "N/D":
-                        with st.expander(f"👤 {idx}. {emp_name} — *{emp_pos}* ({emp_mail})"):
-                            url_linkedin = f"https://www.google.com/search?q=site%3alinkedin.com%2fin%2F+%22{emp_name}%22+AND+%22{brand_query}%22"
-                            url_social = f"https://www.google.com/search?q=%28site%3ainstagram.com+OR+site%3afacebook.com+OR+site%3atiktok.com%29+%22{emp_name}%22+AND+%22{brand_query}%22"
-                            url_github = f"https://www.google.com/search?q=%28site%3agithub.com+OR+site%3agitlab.com%29+%22{emp_name}%22"
-                            url_docs = f"https://www.google.com/search?q=site%3a{clean_domain}+filetype%3apdf+AND+%22{emp_name}%22"
-                            url_sheets = f"https://www.google.com/search?q=site%3a{clean_domain}+%28filetype%3axlsx+OR+filetype%3acsv+OR+filetype%3axls%29+%22{emp_name}%22"
-                            url_cv = f"https://www.google.com/search?q=%22{emp_name}%22+AND+%22{brand_query}%22+AND+%28%22curriculum%22+OR+%22CV%22+OR+%22formazione%22+OR+%22relatore%22%29"
-
-                            rc1, rc2 = st.columns(2)
-                            with rc1:
-                                st.markdown(f'<div class="dork-btn"><a href="{url_linkedin}" target="_blank">🔗 LinkedIn Ufficiale</a></div>', unsafe_allow_html=True)
-                                st.markdown(f'<div class="dork-btn"><a href="{url_social}" target="_blank">📸 Social (IG/FB/TikTok)</a></div>', unsafe_allow_html=True)
-                                st.markdown(f'<div class="dork-btn"><a href="{url_github}" target="_blank">💻 Code (GitHub/GitLab)</a></div>', unsafe_allow_html=True)
-                            with rc2:
-                                st.markdown(f'<div class="dork-btn"><a href="{url_docs}" target="_blank">📄 Documenti PDF Dominio</a></div>', unsafe_allow_html=True)
-                                st.markdown(f'<div class="dork-btn"><a href="{url_sheets}" target="_blank">📊 Fogli di Calcolo (XLSX/CSV)</a></div>', unsafe_allow_html=True)
-                                st.markdown(f'<div class="dork-btn"><a href="{url_cv}" target="_blank">📜 CV & Background Storico</a></div>', unsafe_allow_html=True)
+                st.dataframe(unified_email_table, use_container_width=True)
             else:
-                st.info("Nessun dipendente disponibile per il Dorking.")
+                st.warning("Nessuna email restituita per questo dominio (verifica i crediti disponibili o la presenza di dati pubblici).")
 
-            st.divider()
+        st.divider()
 
-            # --- SOTTODOMINI E ESPORTAZIONE ---
-            st.subheader("📋 Sottodomini & Esportazione Report")
-            if subdomain_records:
-                results_data = []
-                with st.spinner("Analisi sottodomini e InternetDB..."):
-                    for item in subdomain_records:
-                        sub = item["subdomain"]
-                        ssl_exp = item["ssl_expiry"]
-                        ip_addr = PassiveReconGlobal.resolve_domain_to_ip(sub)
-                        internetdb_info = PassiveReconGlobal.check_shodan_internetdb(ip_addr)
+        # --- GOOGLE DORKING AVANZATO RESPONSIVE ---
+        st.subheader("🔎 Google Dorking Avanzato (Mobile Friendly)")
+        st.markdown(f"Query mirate per il dominio: `{clean_domain}`")
 
-                        ports_list = ", ".join(map(str, internetdb_info["ports"])) if internetdb_info["ports"] else "Nessuna porta"
-                        cves_list = ", ".join(internetdb_info["cves"]) if internetdb_info["cves"] else "Nessuna CVE"
+        domain_parts = clean_domain.split('.')
+        brand_query = domain_parts[0] if len(domain_parts) <= 2 else f"{domain_parts[0]} {domain_parts[1]}"
 
-                        results_data.append({
-                            "Sottodominio": sub, "IP": ip_addr,
-                            "Porte": ports_list, "CVEs": cves_list, "SSL": ssl_exp
-                        })
+        if unified_email_table:
+            for idx, contact in enumerate(unified_email_table, 1):
+                emp_name = contact.get("nome-cognome", "N/D")
+                emp_pos = contact.get("posizione", "N/D")
+                emp_mail = contact.get("mail", "N/D")
 
-                st.dataframe(results_data, use_container_width=True)
+                if emp_name != "N/D":
+                    with st.expander(f"👤 {idx}. {emp_name} — *{emp_pos}* ({emp_mail})"):
+                        url_linkedin = f"https://www.google.com/search?q=site%3alinkedin.com%2fin%2F+%22{emp_name}%22+AND+%22{brand_query}%22"
+                        url_social = f"https://www.google.com/search?q=%28site%3ainstagram.com+OR+site%3afacebook.com+OR+site%3atiktok.com%29+%22{emp_name}%22+AND+%22{brand_query}%22"
+                        url_github = f"https://www.google.com/search?q=%28site%3agithub.com+OR+site%3agitlab.com%29+%22{emp_name}%22"
+                        url_docs = f"https://www.google.com/search?q=site%3a{clean_domain}+filetype%3apdf+AND+%22{emp_name}%22"
+                        url_sheets = f"https://www.google.com/search?q=site%3a{clean_domain}+%28filetype%3axlsx+OR+filetype%3acsv+OR+filetype%3axls%29+%22{emp_name}%22"
+                        url_cv = f"https://www.google.com/search?q=%22{emp_name}%22+AND+%22{brand_query}%22+AND+%28%22curriculum%22+OR+%22CV%22+OR+%22formazione%22+OR+%22relatore%22%29"
 
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    json_export = json.dumps({
-                        "domain": clean_domain, "subdomains_analysis": results_data, "contacts": unified_email_table
-                    }, indent=4, ensure_ascii=False)
-                    st.download_button("📥 Scarica JSON", data=json_export, file_name=f"osint_{clean_domain}.json", mime="application/json")
-                with col_btn2:
-                    pdf_bytes = generate_pdf_report(clean_domain, dns_info, email_sec, dmarc_check, results_data, iot_devices, hunter_data, company_data, unified_email_table)
-                    st.download_button("📄 Scarica PDF", data=pdf_bytes, file_name=f"osint_{clean_domain}.pdf", mime="application/pdf")
-            else:
-                st.info("Nessun sottodominio trovato.")
+                        rc1, rc2 = st.columns(2)
+                        with rc1:
+                            st.markdown(f'<div class="dork-btn"><a href="{url_linkedin}" target="_blank">🔗 LinkedIn Ufficiale</a></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="dork-btn"><a href="{url_social}" target="_blank">📸 Social (IG/FB/TikTok)</a></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="dork-btn"><a href="{url_github}" target="_blank">💻 Code (GitHub/GitLab)</a></div>', unsafe_allow_html=True)
+                        with rc2:
+                            st.markdown(f'<div class="dork-btn"><a href="{url_docs}" target="_blank">📄 Documenti PDF Dominio</a></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="dork-btn"><a href="{url_sheets}" target="_blank">📊 Fogli di Calcolo (XLSX/CSV)</a></div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="dork-btn"><a href="{url_cv}" target="_blank">📜 CV & Background Storico</a></div>', unsafe_allow_html=True)
+        else:
+            st.info("Nessun dipendente disponibile per il Dorking.")
+
+        st.divider()
+
+        # --- SOTTODOMINI E ESPORTAZIONE ---
+        st.subheader("📋 Sottodomini & Esportazione Report")
+        if subdomain_records:
+            results_data = []
+            with st.spinner("Analisi sottodomini e InternetDB..."):
+                for item in subdomain_records:
+                    sub = item["subdomain"]
+                    ssl_exp = item["ssl_expiry"]
+                    ip_addr = PassiveReconGlobal.resolve_domain_to_ip(sub)
+                    internetdb_info = PassiveReconGlobal.check_shodan_internetdb(ip_addr)
+
+                    ports_list = ", ".join(map(str, internetdb_info["ports"])) if internetdb_info["ports"] else "Nessuna porta"
+                    cves_list = ", ".join(internetdb_info["cves"]) if internetdb_info["cves"] else "Nessuna CVE"
+
+                    results_data.append({
+                        "Sottodominio": sub, "IP": ip_addr,
+                        "Porte": ports_list, "CVEs": cves_list, "SSL": ssl_exp
+                    })
+
+            st.dataframe(results_data, use_container_width=True)
+
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                json_export = json.dumps({
+                    "domain": clean_domain, "subdomains_analysis": results_data, "contacts": unified_email_table
+                }, indent=4, ensure_ascii=False)
+                st.download_button("📥 Scarica JSON", data=json_export, file_name=f"osint_{clean_domain}.json", mime="application/json")
+            with col_btn2:
+                pdf_bytes = generate_pdf_report(clean_domain, dns_info, email_sec, dmarc_check, results_data, iot_devices, hunter_data, company_data, unified_email_table)
+                st.download_button("📄 Scarica PDF", data=pdf_bytes, file_name=f"osint_{clean_domain}.pdf", mime="application/pdf")
+        else:
+            st.info("Nessun sottodominio trovato.")
 else:
     st.info("👈 Inserisci un dominio target nella barra laterale e avvia l'analisi.")
