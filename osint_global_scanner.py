@@ -1,3 +1,4 @@
+
 import os
 import requests
 import json
@@ -33,31 +34,26 @@ def check_password():
     entered_password = st.session_state.get("password_input", "")
     if APP_PASSWORD and entered_password == APP_PASSWORD:
         st.session_state.authenticated = True
-        # Pulisce l'input per sicurezza
         st.session_state["password_input"] = ""
     else:
         st.session_state.authenticated = False
         st.error("❌ Password errata o non configurata nei secrets.")
 
-# Se non è autenticato, mostra solo la schermata di login
 if not st.session_state.authenticated:
     st.title("🔐 Accesso Protetto - OSINT Global Suite")
     st.markdown("Questa applicazione contiene strumenti di ricognizione avanzata. Inserisci la password per procedere.")
 
     st.text_input("Password di accesso:", type="password", key="password_input", on_change=check_password)
     st.button("🔑 Accedi", on_click=check_password)
-    st.stop()  # Interrompe l'esecuzione del resto dell'app finché non si effettua il login
+    st.stop()
 
 # --- STILI CSS RESPONSIVE PER SMARTPHONE, TABLET E PC ---
 st.markdown("""
     <style>
-    /* Adattamento tabelle e DataFrame su mobile */
     [data-testid="stDataFrame"] {
         width: 100% !important;
         overflow-x: auto;
     }
-
-    /* Padding fluido per i container principali su schermi piccoli */
     @media (max-width: 768px) {
         .block-container {
             padding-left: 1rem;
@@ -69,7 +65,6 @@ st.markdown("""
             margin-bottom: 8px;
         }
     }
-
     a {
         text-decoration: none;
         font-weight: 500;
@@ -80,7 +75,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Inizializzazione dello Storico delle Analisi in Session State
 if "history" not in st.session_state:
     st.session_state.history = {}
 
@@ -102,7 +96,6 @@ class PDFReportGenerator(FPDF):
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
 def clean_for_pdf(text: str) -> str:
-    """Funzione universale di pulizia per evitare crash di codifica latin-1 in FPDF."""
     if not text:
         return ""
     cleaned = str(text).replace('✅', '[OK]').replace('❌', '[NO]').replace('🟢', '[ACTIVE]').replace('🔴', '[OFFLINE]')
@@ -180,8 +173,6 @@ def generate_pdf_report(domain: str, dns_info: Dict, email_security: Dict, dmarc
             cves = clean_for_pdf(str(sub.get('Vulnerabilità CVE', 'N/D')))
             line = f" - {sub_name} (IP: {ip_addr}) | Ports: {ports} | CVEs: {cves}"
             pdf.cell(0, 5, line, 0, 1)
-        if len(subdomains_data) > 30:
-            pdf.cell(0, 5, f' ... and {len(subdomains_data) - 30} more subdomains.', 0, 1)
     else:
         pdf.cell(0, 5, ' No subdomains discovered.', 0, 1)
 
@@ -515,7 +506,7 @@ class PassiveReconGlobal:
             pass
         return people_result
 
-# --- 3. INTERFACCIA UTENTE PRINCIPALE (ACCESSIBILE SOLO DOPO IL LOGIN) ---
+# --- 3. INTERFACCIA UTENTE PRINCIPALE ---
 st.title("🌍 OSINT Global Suite")
 st.markdown(
     "Framework OSINT protetto e multi-dispositivo (Smartphone, Tablet, PC): "
@@ -543,7 +534,6 @@ if st.sidebar.button("📂 Storico Sessione"):
     else:
         st.sidebar.info("Nessuna memoria.")
 
-# Bottone di logout nella barra laterale
 st.sidebar.divider()
 if st.sidebar.button("🔒 Logout"):
     st.session_state.authenticated = False
@@ -615,18 +605,22 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
 
             st.divider()
 
-            # --- FASE 1: DATI PUBBLICI E EMAIL ---
+            # --- FASE 1: DATI PUBBLICI E EMAIL (Corretto per evitare DeltaGenerator) ---
             st.subheader("🌐 Fase 1: Ricognizione & Sicurezza Email")
             st.markdown("**Server MX:**")
             if dns_info["mx"]:
-                for mx in dns_info["mx"]: st.code(mx, language="text")
+                for mx in dns_info["mx"]:
+                    st.code(mx, language="text")
             else:
                 st.info("Nessun MX trovato.")
 
             ec1, ec2 = st.columns(2)
             with ec1:
                 st.markdown("##### SPF")
-                st.success(email_sec["SPF"]) if "correttamente" in email_sec["SPF"] else st.warning(email_sec["SPF"])
+                if "correttamente" in email_sec["SPF"]:
+                    st.success(email_sec["SPF"])
+                else:
+                    st.warning(email_sec["SPF"])
             with ec2:
                 st.markdown("##### DMARC")
                 if "correttamente" in email_sec["DMARC"]:
