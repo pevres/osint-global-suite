@@ -1,4 +1,3 @@
-
 import os
 import requests
 import json
@@ -506,7 +505,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
         ip_passive_info = {}
 
         if is_ip:
-            # --- SCENARIO TARGET: INDIRIZZO IP (Escluso Hunter.io, focalizzato su Shodan, InternetDB e ASN) ---
+            # --- SCENARIO TARGET: INDIRIZZO IP ---
             with st.spinner(f"Analisi passiva (Reverse DNS, ASN) e Shodan per l'IP `{clean_target}`..."):
                 ip_passive_info = PassiveReconGlobal.get_passive_ip_intelligence(clean_target)
                 internetdb_info = PassiveReconGlobal.check_shodan_internetdb(clean_target)
@@ -517,7 +516,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                     "ssl_expiry": "N/D"
                 }]
         else:
-            # --- SCENARIO TARGET: DOMINIO (Analisi Completa inclusi DNS, DMARC e Hunter.io) ---
+            # --- SCENARIO TARGET: DOMINIO ---
             with st.spinner(f"Fase 1/2: Ricognizione avanzata e Shodan per il dominio `{clean_target}`..."):
                 dns_info = PassiveReconGlobal.get_public_dns_info(clean_target)
                 subdomain_records = PassiveReconGlobal.get_passive_subdomains_and_ssl(clean_target)
@@ -668,7 +667,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                                 st.markdown(f'<div class="dork-btn"><a href="{url_sheets}" target="_blank">📊 Fogli di Calcolo (XLSX/CSV)</a></div>', unsafe_allow_html=True)
                                 st.markdown(f'<div class="dork-btn"><a href="{url_cv}" target="_blank">📜 CV & Background Storico</a></div>', unsafe_allow_html=True)
             else:
-                st.info("Nessun dipendente disponibile.")
+                st.info("Nessun dipendente disponibile per il Dorking.")
 
             st.divider()
 
