@@ -487,6 +487,11 @@ st.markdown(
 st.sidebar.header("⚙️ Target & Configuration")
 target_input = st.sidebar.text_input("Target (Dominio o IP):", value="", placeholder="es. stripe.com o 8.8.8.8")
 
+# Opzione per associare manualmente un dominio se si scansiona un IP
+optional_domain = ""
+if target_input and is_valid_ip(target_input.strip()):
+    optional_domain = st.sidebar.text_input("Dominio Aziendale Associato (Opzionale per Hunter.io):", value="", placeholder="es. azienda.com")
+
 if HUNTER_API_KEY:
     st.sidebar.success("🔑 Hunter.io attiva")
 else:
@@ -531,7 +536,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
         ip_passive_info = {}
 
         if is_ip:
-            # --- SCENARIO TARGET: INDIRIZZO IP (Scansione Completa: Shodan, InternetDB, Reverse DNS, ASN & Hunter.io) ---
+            # --- SCENARIO TARGET: INDIRIZZO IP ---
             with st.spinner(f"Fase 1/2: Ricognizione passiva (Reverse DNS, ASN) e Shodan per l'IP `{clean_target}`..."):
                 ip_passive_info = PassiveReconGlobal.get_passive_ip_intelligence(clean_target)
                 internetdb_info = PassiveReconGlobal.check_shodan_internetdb(clean_target)
@@ -542,18 +547,19 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                     "ssl_expiry": "N/D"
                 }]
 
-            # Se dal Reverse DNS otteniamo un hostname valido, ricaviamo il dominio di secondo livello per Hunter.io
-            resolved_host = ip_passive_info.get("hostname", "")
-            derived_domain = ""
-            if resolved_host and resolved_host != "N/D":
-                parts = resolved_host.split('.')
-                if len(parts) >= 2:
-                    derived_domain = f"{parts[-2]}.{parts[-1]}"
+            # Determina il dominio da passare a Hunter.io (dall'input manuale o dal reverse DNS se valido)
+            target_domain_for_hunter = optional_domain.strip().lower()
+            if not target_domain_for_hunter:
+                resolved_host = ip_passive_info.get("hostname", "")
+                if resolved_host and resolved_host != "N/D" and not any(cloud in resolved_host for cloud in ["amazonaws", "digitalocean", "cloudflare", "googleusercontent", "compute"]):
+                    parts = resolved_host.split('.')
+                    if len(parts) >= 2:
+                        target_domain_for_hunter = f"{parts[-2]}.{parts[-1]}"
 
-            if derived_domain and HUNTER_API_KEY:
-                with st.spinner(f"Fase 2/2: Incrocio e interrogazione Hunter.io per il dominio associato `{derived_domain}`..."):
-                    hunter_data = PassiveReconGlobal.get_hunter_domain_search(derived_domain, HUNTER_API_KEY)
-                    company_data = PassiveReconGlobal.get_hunter_companies_find(derived_domain, HUNTER_API_KEY)
+            if target_domain_for_hunter and HUNTER_API_KEY:
+                with st.spinner(f"Fase 2/2: Interrogazione Hunter.io per il dominio `{target_domain_for_hunter}`..."):
+                    hunter_data = PassiveReconGlobal.get_hunter_domain_search(target_domain_for_hunter, HUNTER_API_KEY)
+                    company_data = PassiveReconGlobal.get_hunter_companies_find(target_domain_for_hunter, HUNTER_API_KEY)
                     if hunter_data.get("emails"):
                         for e_obj in hunter_data.get("emails"):
                             email_addr = e_obj.get("email")
@@ -695,13 +701,13 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
             st.dataframe(unified_email_table, use_container_width=True)
             st.divider()
 
-        # --- GOOGLE DORKING (Per Domini o Dominio Derivato da IP) ---
-        target_for_dorks = derived_domain if (is_ip and derived_domain) else clean_target
-        if not is_ip or (is_ip and derived_domain and unified_email_table):
+        # --- GOOGLE DORKING ---
+        dork_target = (optional_domain.strip().lower() if is_ip and optional_domain.strip() else clean_target)
+        if unified_email_table or not is_ip:
             st.subheader("🔎 Google Dorking Avanzato (Mobile Friendly)")
-            st.markdown(f"Query mirate per il target: `{target_for_dorks}`")
+            st.markdown(f"Query mirate per il target: `{dork_target}`")
 
-            d_parts = target_for_dorks.split('.')
+            d_parts = dork_target.split('.')
             brand_query = d_parts[0] if len(d_parts) <= 2 else f"{d_parts[0]} {d_parts[1]}"
 
             if unified_email_table:
@@ -715,8 +721,8 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                             url_linkedin = f"https://www.google.com/search?q=site%3alinkedin.com%2fin%2F+%22{emp_name}%22+AND+%22{brand_query}%22"
                             url_social = f"https://www.google.com/search?q=%28site%3ainstagram.com+OR+site%3afacebook.com+OR+site%3atiktok.com%29+%22{emp_name}%22+AND+%22{brand_query}%22"
                             url_github = f"https://www.google.com/search?q=%28site%3agithub.com+OR+site%3agitlab.com%29+%22{emp_name}%22"
-                            url_docs = f"https://www.google.com/search?q=site%3a{target_for_dorks}+filetype%3apdf+AND+%22{emp_name}%22"
-                            url_sheets = f"https://www.google.com/search?q=site%3a{target_for_dorks}+%28filetype%3axlsx+OR+filetype%3acsv+OR+filetype%3axls%29+%22{emp_name}%22"
+                            url_docs = f"https://www.google.com/search?q=site%3a{dork_target}+filetype%3apdf+AND+%22{emp_name}%22"
+                            url_sheets = f"https://www.google.com/search?q=site%3a{dork_target}+%28filetype%3axlsx+OR+filetype%3acsv+OR+filetype%3axls%29+%22{emp_name}%22"
                             url_cv = f"https://www.google.com/search?q=%22{emp_name}%22+AND+%22{brand_query}%22+AND+%28%22curriculum%22+OR+%22CV%22+OR+%22formazione%22+OR+%22relatore%22%29"
 
                             rc1, rc2 = st.columns(2)
