@@ -411,12 +411,25 @@ class PassiveReconGlobal:
                         fname = e.get("first_name") or ""
                         lname = e.get("last_name") or ""
                         full_name = f"{fname} {lname}".strip() or "N/D"
+
+                        # Estrazione sicura dei social eventualmente presenti nel profilo Hunter
+                        sources = e.get("sources", [])
+                        linkedin_val = "N/D"
+                        twitter_val = "N/D"
+                        for src in sources:
+                            uri = src.get("uri", "")
+                            if "linkedin.com" in uri and linkedin_val == "N/D":
+                                linkedin_val = uri
+
                         formatted_emails.append({
                             "email": e.get("value"),
                             "name": full_name,
                             "position": e.get("position", "N/D"),
                             "confidence": e.get("confidence", 0),
-                            "type": e.get("type", "N/D")
+                            "type": e.get("type", "N/D"),
+                            "profilo linkedin": linkedin_val,
+                            "instagram": "N/D",
+                            "facebook": "N/D"
                         })
                     result_data["emails"] = formatted_emails
         except Exception:
@@ -436,20 +449,6 @@ class PassiveReconGlobal:
         except Exception:
             pass
         return comp_data
-
-    @staticmethod
-    def get_hunter_people_find(email: str, api_key: str) -> Dict:
-        people_result = {}
-        if not api_key or not email:
-            return people_result
-        try:
-            url = f"https://api.hunter.io/v2/people/find?email={email}&api_key={api_key}"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                people_result = response.json().get("data", {})
-        except Exception:
-            pass
-        return people_result
 
 # --- 3. INTERFACCIA UTENTE PRINCIPALE ---
 st.title("🌍 OSINT Global Suite")
@@ -527,35 +526,12 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
             if not subdomain_records and not dns_info["mx"]:
                 st.error(f"❌ Impossibile raccogliere dati pubblici per `{clean_target}`. Verifica il nome del dominio.")
             else:
-                with st.spinner(f"Fase 2/2: Interrogazione Hunter.io per il dominio `{clean_target}`..."):
+                with st.spinner(f"Fase 2/2: Interrogazione diretta Hunter.io per il dominio `{clean_target}`..."):
                     hunter_data = PassiveReconGlobal.get_hunter_domain_search(clean_target, HUNTER_API_KEY)
                     company_data = PassiveReconGlobal.get_hunter_companies_find(clean_target, HUNTER_API_KEY)
 
                     if HUNTER_API_KEY and hunter_data.get("emails"):
-                        for e_obj in hunter_data.get("emails"):
-                            email_addr = e_obj.get("email")
-                            if email_addr:
-                                name_val = e_obj.get("name", "N/D")
-                                pos_val = e_obj.get("position", "N/D")
-                                linkedin_val, instagram_val, facebook_val, tiktok_val = "N/D", "N/D", "N/D", "N/D"
-
-                                p_res = PassiveReconGlobal.get_hunter_people_find(email_addr, HUNTER_API_KEY)
-                                if p_res:
-                                    if not name_val or name_val == "N/D":
-                                        fn, ln = p_res.get('first_name', ''), p_res.get('last_name', '')
-                                        if fn or ln: name_val = f"{fn} {ln}".strip()
-                                    if not pos_val or pos_val == "N/D":
-                                        pos_val = p_res.get('position', 'N/D')
-                                    linkedin_val = p_res.get('linkedin', 'N/D') or "N/D"
-                                    instagram_val = p_res.get('instagram', 'N/D') or "N/D"
-                                    facebook_val = p_res.get('facebook', 'N/D') or "N/D"
-                                    tiktok_val = p_res.get('tiktok', 'N/D') or "N/D"
-
-                                unified_email_table.append({
-                                    "mail": email_addr, "nome-cognome": name_val, "posizione": pos_val,
-                                    "profilo linkedin": linkedin_val, "instagram": instagram_val,
-                                    "facebook": facebook_val, "tiktok": tiktok_val
-                                })
+                        unified_email_table = hunter_data.get("emails")
 
         st.session_state.history[clean_target] = {
             "is_ip": is_ip,
@@ -631,7 +607,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                 if unified_email_table:
                     st.dataframe(unified_email_table, use_container_width=True)
                 else:
-                    st.warning("Nessuna email restituita.")
+                    st.warning("Nessuna email restituita per questo dominio (verifica i crediti disponibili o la presenza di dati pubblici su Hunter.io).")
 
             st.divider()
 
@@ -644,9 +620,9 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
 
             if unified_email_table:
                 for idx, contact in enumerate(unified_email_table, 1):
-                    emp_name = contact.get("nome-cognome", "N/D")
-                    emp_pos = contact.get("posizione", "N/D")
-                    emp_mail = contact.get("mail", "N/D")
+                    emp_name = contact.get("name", "N/D")
+                    emp_pos = contact.get("position", "N/D")
+                    emp_mail = contact.get("email", "N/D")
 
                     if emp_name != "N/D":
                         with st.expander(f"👤 {idx}. {emp_name} — *{emp_pos}* ({emp_mail})"):
