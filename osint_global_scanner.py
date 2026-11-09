@@ -245,9 +245,29 @@ class PassiveReconGlobal:
         return "N/D"
 
     @staticmethod
+    def get_domains_from_ip_ssl(ip_address: str) -> List[str]:
+        """Interroga crt.sh per trovare domini associati storicamente a un indirizzo IP."""
+        domains = []
+        try:
+            url = f"https://crt.sh/?q={ip_address}&output=json"
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "OSINT-Tool"})
+            if resp.status_code == 200:
+                data = resp.json()
+                for entry in data:
+                    name_value = entry.get('name_value', '')
+                    for line in name_value.split('\n'):
+                        line = line.strip().lower()
+                        if line and '*' not in line and not is_valid_ip(line):
+                            if line not in domains:
+                                domains.append(line)
+        except Exception:
+            pass
+        return domains
+
+    @staticmethod
     def get_passive_ip_intelligence(ip_address: str) -> Dict:
-        """Esegue Reverse DNS e informazioni di rete passive (ASN/ISP)."""
-        info = {"hostname": "N/D", "org": "N/D", "country": "N/D", "city": "N/D"}
+        """Esegue Reverse DNS, ASN e correlazione domini tramite SSL certificates."""
+        info = {"hostname": "N/D", "org": "N/D", "country": "N/D", "city": "N/D", "associated_domains": []}
         try:
             hostname, _, _ = socket.gethostbyaddr(ip_address)
             info["hostname"] = hostname
@@ -265,6 +285,9 @@ class PassiveReconGlobal:
                     info["hostname"] = data.get("hostname")
         except Exception:
             pass
+
+        # Ricerca domini storici tramite SSL su crt.sh
+        info["associated_domains"] = PassiveReconGlobal.get_domains_from_ip_ssl(ip_address)
         return info
 
     @staticmethod
@@ -481,16 +504,11 @@ class PassiveReconGlobal:
 st.title("🌍 OSINT Global Suite")
 st.markdown(
     "Framework OSINT protetto e multi-dispositivo (Smartphone, Tablet, PC): "
-    "**1.** Ricognizione completa su Dominio o Indirizzo IP (con Shodan, InternetDB, Reverse DNS, ASN e Hunter.io). **2.** Contatti, social e Dorking avanzato."
+    "**1.** Ricognizione completa su Dominio o Indirizzo IP (con correlazione SSL automatica). **2.** Contatti, social e Dorking avanzato."
 )
 
 st.sidebar.header("⚙️ Target & Configuration")
 target_input = st.sidebar.text_input("Target (Dominio o IP):", value="", placeholder="es. stripe.com o 8.8.8.8")
-
-# Opzione per associare manualmente un dominio se si scansiona un IP
-optional_domain = ""
-if target_input and is_valid_ip(target_input.strip()):
-    optional_domain = st.sidebar.text_input("Dominio Aziendale Associato (Opzionale per Hunter.io):", value="", placeholder="es. azienda.com")
 
 if HUNTER_API_KEY:
     st.sidebar.success("🔑 Hunter.io attiva")
@@ -534,32 +552,42 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
         company_data = {}
         unified_email_table = []
         ip_passive_info = {}
+        derived_domain = ""
 
         if is_ip:
-            # --- SCENARIO TARGET: INDIRIZZO IP ---
-            with st.spinner(f"Fase 1/2: Ricognizione passiva (Reverse DNS, ASN) e Shodan per l'IP `{clean_target}`..."):
+            # --- SCENARIO TARGET: INDIRIZZO IP (Correlazione SSL passiva + Shodan + Hunter.io) ---
+            with st.spinner(f"Fase 1/2: Analisi passiva IP (ASN, Reverse DNS e certificati SSL) per `{clean_target}`..."):
                 ip_passive_info = PassiveReconGlobal.get_passive_ip_intelligence(clean_target)
                 internetdb_info = PassiveReconGlobal.check_shodan_internetdb(clean_target)
                 iot_devices = PassiveReconGlobal.search_shodan_iot_devices(clean_target, SHODAN_API_KEY, is_ip=True)
 
                 subdomain_records = [{
-                    "subdomain": f"IP Target ({clean_target}) [Hostname: {ip_passive_info.get('hostname', 'N/D')}]",
+                    "subdomain": f"IP Target ({clean_target}) [Host: {ip_passive_info.get('hostname', 'N/D')}]",
                     "ssl_expiry": "N/D"
                 }]
 
-            # Determina il dominio da passare a Hunter.io (dall'input manuale o dal reverse DNS se valido)
-            target_domain_for_hunter = optional_domain.strip().lower()
-            if not target_domain_for_hunter:
+            # Cerca di estrarre un dominio valido dai certificati SSL o dall'hostname
+            assoc_doms = ip_passive_info.get("associated_domains", [])
+            if assoc_doms:
+                # Prende il primo dominio pulito non generico
+                for d in assoc_doms:
+                    if not any(x in d for x in ["amazonaws", "cloudflare", "digitalocean", "google", "compute", "akamaized"]):
+                        parts = d.split('.')
+                        if len(parts) >= 2:
+                            derived_domain = f"{parts[-2]}.{parts[-1]}"
+                            break
+
+            if not derived_domain:
                 resolved_host = ip_passive_info.get("hostname", "")
-                if resolved_host and resolved_host != "N/D" and not any(cloud in resolved_host for cloud in ["amazonaws", "digitalocean", "cloudflare", "googleusercontent", "compute"]):
+                if resolved_host and resolved_host != "N/D":
                     parts = resolved_host.split('.')
                     if len(parts) >= 2:
-                        target_domain_for_hunter = f"{parts[-2]}.{parts[-1]}"
+                        derived_domain = f"{parts[-2]}.{parts[-1]}"
 
-            if target_domain_for_hunter and HUNTER_API_KEY:
-                with st.spinner(f"Fase 2/2: Interrogazione Hunter.io per il dominio `{target_domain_for_hunter}`..."):
-                    hunter_data = PassiveReconGlobal.get_hunter_domain_search(target_domain_for_hunter, HUNTER_API_KEY)
-                    company_data = PassiveReconGlobal.get_hunter_companies_find(target_domain_for_hunter, HUNTER_API_KEY)
+            if derived_domain and HUNTER_API_KEY:
+                with st.spinner(f"Fase 2/2: Correlazione trovata! Interrogazione Hunter.io per `{derived_domain}`..."):
+                    hunter_data = PassiveReconGlobal.get_hunter_domain_search(derived_domain, HUNTER_API_KEY)
+                    company_data = PassiveReconGlobal.get_hunter_companies_find(derived_domain, HUNTER_API_KEY)
                     if hunter_data.get("emails"):
                         for e_obj in hunter_data.get("emails"):
                             email_addr = e_obj.get("email")
@@ -645,13 +673,17 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
         st.divider()
 
         if is_ip:
-            # --- SEZIONE PASSIVA IP (ASN & Reverse DNS) ---
-            st.subheader("🌐 Informazioni Passive & ASN (IP Intelligence)")
+            # --- SEZIONE PASSIVA IP (ASN & Certificati SSL Correlati) ---
+            st.subheader("🌐 Informazioni Passive & Correlazione SSL (IP Intelligence)")
             ic1, ic2, ic3, ic4 = st.columns(4)
             ic1.metric("Hostname", ip_passive_info.get("hostname", "N/D"))
             ic2.metric("Organizzazione / ISP", ip_passive_info.get("org", "N/D"))
             ic3.metric("Paese", ip_passive_info.get("country", "N/D"))
-            ic4.metric("Città", ip_passive_info.get("city", "N/D"))
+            ic4.metric("Dominio Correlato", derived_domain if derived_domain else "Nessuno trovato")
+
+            if ip_passive_info.get("associated_domains"):
+                st.markdown("**Domini storici associati a questo IP tramite certificati SSL:**")
+                st.code(", ".join(ip_passive_info.get("associated_domains")), language="text")
             st.divider()
         else:
             # --- FASE 1: DATI PUBBLICI E EMAIL (Solo per Domini) ---
@@ -688,7 +720,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
 
         st.divider()
 
-        # --- INTELLIGENCE HUNTER.IO (Disponibile per entrambi) ---
+        # --- INTELLIGENCE HUNTER.IO (Disponibile per entrambi se c'è un dominio) ---
         if HUNTER_API_KEY and unified_email_table:
             st.subheader("🕵️‍♂️ Contatti & Social (Hunter.io)")
             if company_data:
@@ -702,7 +734,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
             st.divider()
 
         # --- GOOGLE DORKING ---
-        dork_target = (optional_domain.strip().lower() if is_ip and optional_domain.strip() else clean_target)
+        dork_target = (derived_domain if (is_ip and derived_domain) else clean_target)
         if unified_email_table or not is_ip:
             st.subheader("🔎 Google Dorking Avanzato (Mobile Friendly)")
             st.markdown(f"Query mirate per il target: `{dork_target}`")
@@ -719,7 +751,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                     if emp_name != "N/D":
                         with st.expander(f"👤 {idx}. {emp_name} — *{emp_pos}* ({emp_mail})"):
                             url_linkedin = f"https://www.google.com/search?q=site%3alinkedin.com%2fin%2F+%22{emp_name}%22+AND+%22{brand_query}%22"
-                            url_social = f"https://www.google.com/search?q=%28site%3ainstagram.com+OR+site%3afacebook.com+OR+site%3atiktok.com%29+%22{emp_name}%22+AND+%22{brand_query}%22"
+                            url_social = f"https://www.google.com/search?q=%28site%3ainstagram.com+OR+site%3afacebook.com+OR+site%3aiktok.com%29+%22{emp_name}%22+AND+%22{brand_query}%22"
                             url_github = f"https://www.google.com/search?q=%28site%3agithub.com+OR+site%3agitlab.com%29+%22{emp_name}%22"
                             url_docs = f"https://www.google.com/search?q=site%3a{dork_target}+filetype%3apdf+AND+%22{emp_name}%22"
                             url_sheets = f"https://www.google.com/search?q=site%3a{dork_target}+%28filetype%3axlsx+OR+filetype%3acsv+OR+filetype%3axls%29+%22{emp_name}%22"
