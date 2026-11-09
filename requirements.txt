@@ -1,0 +1,9 @@
+streamlit
+requests
+fpdf2
+python-dotenv
+shodastreamlit
+requests
+fpdf2
+python-dotenv
+shodann
