@@ -1,3 +1,4 @@
+
 import os
 import requests
 import json
@@ -126,17 +127,19 @@ def generate_pdf_report(target: str, is_ip: bool, dns_info: Dict, email_security
     pdf.cell(0, 7, clean_for_pdf(target_label), 0, 1)
     pdf.set_font('helvetica', '', 9)
     pdf.cell(0, 5, f'Organization: {org_name}', 0, 1)
-    pdf.cell(0, 5, f'Total Assets Discovered: {len(subdomains_data)}', 0, 1)
+    pdf.cell(0, 5, f'Total Assets/Subdomains Discovered: {len(subdomains_data)}', 0, 1)
     pdf.cell(0, 5, f'Total IoT/Exposed Assets: {len(iot_data)}', 0, 1)
-    pdf.cell(0, 5, f'Total Contacts Discovered: {len(contacts_table)}', 0, 1)
+    if not is_ip:
+        pdf.cell(0, 5, f'Total Contacts Discovered: {len(contacts_table)}', 0, 1)
     pdf.ln(4)
 
-    pdf.set_font('helvetica', 'B', 11)
-    pdf.cell(0, 7, '1. Email Security & Advanced Anti-Spoofing', 0, 1)
-    pdf.set_font('helvetica', '', 9)
-    pdf.cell(0, 5, f' - SPF Protection: {spf_clean}', 0, 1)
-    pdf.cell(0, 5, f' - DMARC Protection: {dmarc_clean} (Policy: {dmarc_policy})', 0, 1)
-    pdf.ln(4)
+    if not is_ip:
+        pdf.set_font('helvetica', 'B', 11)
+        pdf.cell(0, 7, '1. Email Security & Advanced Anti-Spoofing', 0, 1)
+        pdf.set_font('helvetica', '', 9)
+        pdf.cell(0, 5, f' - SPF Protection: {spf_clean}', 0, 1)
+        pdf.cell(0, 5, f' - DMARC Protection: {dmarc_clean} (Policy: {dmarc_policy})', 0, 1)
+        pdf.ln(4)
 
     pdf.set_font('helvetica', 'B', 11)
     pdf.cell(0, 7, '2. Discovered IoT Devices & Exposed Assets (Shodan / InternetDB)', 0, 1)
@@ -152,23 +155,19 @@ def generate_pdf_report(target: str, is_ip: bool, dns_info: Dict, email_security
         pdf.cell(0, 5, ' No public IoT devices indexed.', 0, 1)
     pdf.ln(4)
 
-    pdf.set_font('helvetica', 'B', 11)
-    pdf.cell(0, 7, '3. Discovered Contacts, Emails & Socials (Hunter.io)', 0, 1)
-    pdf.set_font('helvetica', '', 7)
-    if contacts_table:
+    if not is_ip and contacts_table:
+        pdf.set_font('helvetica', 'B', 11)
+        pdf.cell(0, 7, '3. Discovered Contacts, Emails & Socials (Hunter.io)', 0, 1)
+        pdf.set_font('helvetica', '', 7)
         for idx, contact in enumerate(contacts_table, 1):
             mail = clean_for_pdf(contact.get('mail'))
             name = clean_for_pdf(contact.get('nome-cognome'))
             pos = clean_for_pdf(contact.get('posizione'))
             lin = clean_for_pdf(contact.get('profilo linkedin'))
             ig = clean_for_pdf(contact.get('instagram'))
-            fb = clean_for_pdf(contact.get('facebook'))
-            tk = clean_for_pdf(contact.get('tiktok'))
-            line = f"{idx}. {mail} | {name} | {pos} | LI: {lin} | IG: {ig} | FB: {fb} | TK: {tk}"
+            line = f"{idx}. {mail} | {name} | {pos} | LI: {lin} | IG: {ig}"
             pdf.cell(0, 4, line, 0, 1)
-    else:
-        pdf.cell(0, 5, ' No public emails discovered.', 0, 1)
-    pdf.ln(4)
+        pdf.ln(4)
 
     return bytes(pdf.output(dest='S'))
 
@@ -245,29 +244,9 @@ class PassiveReconGlobal:
         return "N/D"
 
     @staticmethod
-    def get_domains_from_ip_ssl(ip_address: str) -> List[str]:
-        """Interroga crt.sh per trovare domini associati storicamente a un indirizzo IP."""
-        domains = []
-        try:
-            url = f"https://crt.sh/?q={ip_address}&output=json"
-            resp = requests.get(url, timeout=10, headers={"User-Agent": "OSINT-Tool"})
-            if resp.status_code == 200:
-                data = resp.json()
-                for entry in data:
-                    name_value = entry.get('name_value', '')
-                    for line in name_value.split('\n'):
-                        line = line.strip().lower()
-                        if line and '*' not in line and not is_valid_ip(line):
-                            if line not in domains:
-                                domains.append(line)
-        except Exception:
-            pass
-        return domains
-
-    @staticmethod
     def get_passive_ip_intelligence(ip_address: str) -> Dict:
-        """Esegue Reverse DNS, ASN e correlazione domini tramite SSL certificates."""
-        info = {"hostname": "N/D", "org": "N/D", "country": "N/D", "city": "N/D", "associated_domains": []}
+        """Esegue Reverse DNS e informazioni di rete passive (ASN/ISP)."""
+        info = {"hostname": "N/D", "org": "N/D", "country": "N/D", "city": "N/D"}
         try:
             hostname, _, _ = socket.gethostbyaddr(ip_address)
             info["hostname"] = hostname
@@ -285,9 +264,6 @@ class PassiveReconGlobal:
                     info["hostname"] = data.get("hostname")
         except Exception:
             pass
-
-        # Ricerca domini storici tramite SSL su crt.sh
-        info["associated_domains"] = PassiveReconGlobal.get_domains_from_ip_ssl(ip_address)
         return info
 
     @staticmethod
@@ -395,19 +371,6 @@ class PassiveReconGlobal:
                                 dmarc_result["policy"] = "Quarantine (In Spam)"
                             elif "p=none" in txt_val.lower():
                                 dmarc_result["policy"] = "None (Solo Monitoraggio)"
-
-                            if "rua=" in txt_val.lower():
-                                try:
-                                    rua_part = [p for p in txt_val.split(';') if 'rua=' in p.lower()][0]
-                                    dmarc_result["rua"] = rua_part.split('=')[1].strip()
-                                except Exception:
-                                    pass
-                            if "ruf=" in txt_val.lower():
-                                try:
-                                    ruf_part = [p for p in txt_val.split(';') if 'ruf=' in p.lower()][0]
-                                    dmarc_result["ruf"] = ruf_part.split('=')[1].strip()
-                                except Exception:
-                                    pass
                             break
         except Exception:
             pass
@@ -422,7 +385,7 @@ class PassiveReconGlobal:
         for txt in txt_records:
             txt_lower = txt.lower()
             if "v=spf1" in txt_lower:
-                mechanisms = txt_lower.count("include:") + txt_lower.count("a") + txt_lower.count("mx") + txt_lower.count("ptr") + txt_lower.count("exists") + txt_lower.count("redirect")
+                mechanisms = txt_lower.count("include:") + txt_lower.count("a") + txt_lower.count("mx")
                 if mechanisms > 10:
                     security["SPF"] = "⚠️ Configurato (Attenzione: Lookup DNS potenzialmente > 10)"
                 else:
@@ -434,42 +397,31 @@ class PassiveReconGlobal:
         result_data = {"organization": "N/D", "pattern": "N/D", "emails": []}
         if not api_key:
             return result_data
-
-        limits_to_try = [limit, 10]
-        for current_limit in limits_to_try:
-            try:
-                url = f"https://api.hunter.io/v2/domain-search?domain={domain}&limit={current_limit}&api_key={api_key}"
-                response = requests.get(url, timeout=12)
-                if response.status_code == 200:
-                    res_json = response.json()
-                    data = res_json.get("data", {})
-                    if data:
-                        result_data["organization"] = data.get("organization", "N/D")
-                        result_data["pattern"] = data.get("pattern", "N/D")
-                        raw_emails = data.get("emails", [])
-                        formatted_emails = []
-                        for e in raw_emails:
-                            fname = e.get("first_name") or ""
-                            lname = e.get("last_name") or ""
-                            full_name = f"{fname} {lname}".strip()
-                            if not full_name:
-                                full_name = "N/D"
-
-                            formatted_emails.append({
-                                "email": e.get("value"),
-                                "name": full_name,
-                                "position": e.get("position", "N/D"),
-                                "confidence": e.get("confidence", 0),
-                                "type": e.get("type", "N/D")
-                            })
-                        result_data["emails"] = formatted_emails
-                    return result_data
-                elif response.status_code == 400 and current_limit != 10:
-                    continue
-                else:
-                    break
-            except Exception:
-                pass
+        try:
+            url = f"https://api.hunter.io/v2/domain-search?domain={domain}&limit={limit}&api_key={api_key}"
+            response = requests.get(url, timeout=12)
+            if response.status_code == 200:
+                res_json = response.json()
+                data = res_json.get("data", {})
+                if data:
+                    result_data["organization"] = data.get("organization", "N/D")
+                    result_data["pattern"] = data.get("pattern", "N/D")
+                    raw_emails = data.get("emails", [])
+                    formatted_emails = []
+                    for e in raw_emails:
+                        fname = e.get("first_name") or ""
+                        lname = e.get("last_name") or ""
+                        full_name = f"{fname} {lname}".strip() or "N/D"
+                        formatted_emails.append({
+                            "email": e.get("value"),
+                            "name": full_name,
+                            "position": e.get("position", "N/D"),
+                            "confidence": e.get("confidence", 0),
+                            "type": e.get("type", "N/D")
+                        })
+                    result_data["emails"] = formatted_emails
+        except Exception:
+            pass
         return result_data
 
     @staticmethod
@@ -503,8 +455,8 @@ class PassiveReconGlobal:
 # --- 3. INTERFACCIA UTENTE PRINCIPALE ---
 st.title("🌍 OSINT Global Suite")
 st.markdown(
-    "Framework OSINT protetto e multi-dispositivo (Smartphone, Tablet, PC): "
-    "**1.** Ricognizione completa su Dominio o Indirizzo IP (con correlazione SSL automatica). **2.** Contatti, social e Dorking avanzato."
+    "Framework OSINT protetto e multi-dispositivo: "
+    "**1.** Ricognizione su Dominio (con DNS, SPF, DMARC, Shodan e Hunter.io) oppure **Analisi mirata su IP** (Shodan, InternetDB, ASN e Reverse DNS)."
 )
 
 st.sidebar.header("⚙️ Target & Configuration")
@@ -552,69 +504,20 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
         company_data = {}
         unified_email_table = []
         ip_passive_info = {}
-        derived_domain = ""
 
         if is_ip:
-            # --- SCENARIO TARGET: INDIRIZZO IP (Correlazione SSL passiva + Shodan + Hunter.io) ---
-            with st.spinner(f"Fase 1/2: Analisi passiva IP (ASN, Reverse DNS e certificati SSL) per `{clean_target}`..."):
+            # --- SCENARIO TARGET: INDIRIZZO IP (Escluso Hunter.io, focalizzato su Shodan, InternetDB e ASN) ---
+            with st.spinner(f"Analisi passiva (Reverse DNS, ASN) e Shodan per l'IP `{clean_target}`..."):
                 ip_passive_info = PassiveReconGlobal.get_passive_ip_intelligence(clean_target)
                 internetdb_info = PassiveReconGlobal.check_shodan_internetdb(clean_target)
                 iot_devices = PassiveReconGlobal.search_shodan_iot_devices(clean_target, SHODAN_API_KEY, is_ip=True)
 
                 subdomain_records = [{
-                    "subdomain": f"IP Target ({clean_target}) [Host: {ip_passive_info.get('hostname', 'N/D')}]",
+                    "subdomain": f"IP Target ({clean_target}) [Hostname: {ip_passive_info.get('hostname', 'N/D')}]",
                     "ssl_expiry": "N/D"
                 }]
-
-            # Cerca di estrarre un dominio valido dai certificati SSL o dall'hostname
-            assoc_doms = ip_passive_info.get("associated_domains", [])
-            if assoc_doms:
-                # Prende il primo dominio pulito non generico
-                for d in assoc_doms:
-                    if not any(x in d for x in ["amazonaws", "cloudflare", "digitalocean", "google", "compute", "akamaized"]):
-                        parts = d.split('.')
-                        if len(parts) >= 2:
-                            derived_domain = f"{parts[-2]}.{parts[-1]}"
-                            break
-
-            if not derived_domain:
-                resolved_host = ip_passive_info.get("hostname", "")
-                if resolved_host and resolved_host != "N/D":
-                    parts = resolved_host.split('.')
-                    if len(parts) >= 2:
-                        derived_domain = f"{parts[-2]}.{parts[-1]}"
-
-            if derived_domain and HUNTER_API_KEY:
-                with st.spinner(f"Fase 2/2: Correlazione trovata! Interrogazione Hunter.io per `{derived_domain}`..."):
-                    hunter_data = PassiveReconGlobal.get_hunter_domain_search(derived_domain, HUNTER_API_KEY)
-                    company_data = PassiveReconGlobal.get_hunter_companies_find(derived_domain, HUNTER_API_KEY)
-                    if hunter_data.get("emails"):
-                        for e_obj in hunter_data.get("emails"):
-                            email_addr = e_obj.get("email")
-                            if email_addr:
-                                name_val = e_obj.get("name", "N/D")
-                                pos_val = e_obj.get("position", "N/D")
-                                linkedin_val, instagram_val, facebook_val, tiktok_val = "N/D", "N/D", "N/D", "N/D"
-
-                                p_res = PassiveReconGlobal.get_hunter_people_find(email_addr, HUNTER_API_KEY)
-                                if p_res:
-                                    if not name_val or name_val == "N/D":
-                                        fn, ln = p_res.get('first_name', ''), p_res.get('last_name', '')
-                                        if fn or ln: name_val = f"{fn} {ln}".strip()
-                                    if not pos_val or pos_val == "N/D":
-                                        pos_val = p_res.get('position', 'N/D')
-                                    linkedin_val = p_res.get('linkedin', 'N/D') or "N/D"
-                                    instagram_val = p_res.get('instagram', 'N/D') or "N/D"
-                                    facebook_val = p_res.get('facebook', 'N/D') or "N/D"
-                                    tiktok_val = p_res.get('tiktok', 'N/D') or "N/D"
-
-                                unified_email_table.append({
-                                    "mail": email_addr, "nome-cognome": name_val, "posizione": pos_val,
-                                    "profilo linkedin": linkedin_val, "instagram": instagram_val,
-                                    "facebook": facebook_val, "tiktok": tiktok_val
-                                })
         else:
-            # --- SCENARIO TARGET: DOMINIO ---
+            # --- SCENARIO TARGET: DOMINIO (Analisi Completa inclusi DNS, DMARC e Hunter.io) ---
             with st.spinner(f"Fase 1/2: Ricognizione avanzata e Shodan per il dominio `{clean_target}`..."):
                 dns_info = PassiveReconGlobal.get_public_dns_info(clean_target)
                 subdomain_records = PassiveReconGlobal.get_passive_subdomains_and_ssl(clean_target)
@@ -625,7 +528,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
             if not subdomain_records and not dns_info["mx"]:
                 st.error(f"❌ Impossibile raccogliere dati pubblici per `{clean_target}`. Verifica il nome del dominio.")
             else:
-                with st.spinner(f"Fase 2/2: Interrogazione Hunter.io..."):
+                with st.spinner(f"Fase 2/2: Interrogazione Hunter.io per il dominio `{clean_target}`..."):
                     hunter_data = PassiveReconGlobal.get_hunter_domain_search(clean_target, HUNTER_API_KEY)
                     company_data = PassiveReconGlobal.get_hunter_companies_find(clean_target, HUNTER_API_KEY)
 
@@ -644,7 +547,6 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                                         if fn or ln: name_val = f"{fn} {ln}".strip()
                                     if not pos_val or pos_val == "N/D":
                                         pos_val = p_res.get('position', 'N/D')
-
                                     linkedin_val = p_res.get('linkedin', 'N/D') or "N/D"
                                     instagram_val = p_res.get('instagram', 'N/D') or "N/D"
                                     facebook_val = p_res.get('facebook', 'N/D') or "N/D"
@@ -667,23 +569,19 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Target Type", "IP Address" if is_ip else "Domain")
         col2.metric("Target", clean_target)
-        col3.metric("Asset / Sottodomini", len(subdomain_records))
+        col3.metric("Asset Rilevati", len(subdomain_records))
         col4.metric("Email Trovate", len(unified_email_table))
 
         st.divider()
 
         if is_ip:
-            # --- SEZIONE PASSIVA IP (ASN & Certificati SSL Correlati) ---
-            st.subheader("🌐 Informazioni Passive & Correlazione SSL (IP Intelligence)")
+            # --- SEZIONE PASSIVA IP (ASN & Reverse DNS) ---
+            st.subheader("🌐 Informazioni Passive & ASN (IP Intelligence)")
             ic1, ic2, ic3, ic4 = st.columns(4)
             ic1.metric("Hostname", ip_passive_info.get("hostname", "N/D"))
             ic2.metric("Organizzazione / ISP", ip_passive_info.get("org", "N/D"))
             ic3.metric("Paese", ip_passive_info.get("country", "N/D"))
-            ic4.metric("Dominio Correlato", derived_domain if derived_domain else "Nessuno trovato")
-
-            if ip_passive_info.get("associated_domains"):
-                st.markdown("**Domini storici associati a questo IP tramite certificati SSL:**")
-                st.code(", ".join(ip_passive_info.get("associated_domains")), language="text")
+            ic4.metric("Città", ip_passive_info.get("city", "N/D"))
             st.divider()
         else:
             # --- FASE 1: DATI PUBBLICI E EMAIL (Solo per Domini) ---
@@ -720,27 +618,30 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
 
         st.divider()
 
-        # --- INTELLIGENCE HUNTER.IO (Disponibile per entrambi se c'è un dominio) ---
-        if HUNTER_API_KEY and unified_email_table:
+        if not is_ip:
+            # --- INTELLIGENCE HUNTER.IO (Solo per Domini) ---
             st.subheader("🕵️‍♂️ Contatti & Social (Hunter.io)")
-            if company_data:
-                cc1, cc2, cc3, cc4 = st.columns(4)
-                cc1.metric("Azienda", company_data.get("name", "N/D"))
-                cc2.metric("Settore", company_data.get("industry", "N/D"))
-                cc3.metric("Staff", company_data.get("employees", "N/D"))
-                cc4.metric("Paese", company_data.get("country", "N/D"))
+            if HUNTER_API_KEY:
+                if company_data:
+                    cc1, cc2, cc3, cc4 = st.columns(4)
+                    cc1.metric("Azienda", company_data.get("name", "N/D"))
+                    cc2.metric("Settore", company_data.get("industry", "N/D"))
+                    cc3.metric("Staff", company_data.get("employees", "N/D"))
+                    cc4.metric("Paese", company_data.get("country", "N/D"))
 
-            st.dataframe(unified_email_table, use_container_width=True)
+                if unified_email_table:
+                    st.dataframe(unified_email_table, use_container_width=True)
+                else:
+                    st.warning("Nessuna email restituita.")
+
             st.divider()
 
-        # --- GOOGLE DORKING ---
-        dork_target = (derived_domain if (is_ip and derived_domain) else clean_target)
-        if unified_email_table or not is_ip:
+            # --- GOOGLE DORKING AVANZATO RESPONSIVE (Solo per Domini) ---
             st.subheader("🔎 Google Dorking Avanzato (Mobile Friendly)")
-            st.markdown(f"Query mirate per il target: `{dork_target}`")
+            st.markdown(f"Query mirate per il dominio: `{clean_target}`")
 
-            d_parts = dork_target.split('.')
-            brand_query = d_parts[0] if len(d_parts) <= 2 else f"{d_parts[0]} {d_parts[1]}"
+            domain_parts = clean_target.split('.')
+            brand_query = domain_parts[0] if len(domain_parts) <= 2 else f"{domain_parts[0]} {domain_parts[1]}"
 
             if unified_email_table:
                 for idx, contact in enumerate(unified_email_table, 1):
@@ -751,10 +652,10 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                     if emp_name != "N/D":
                         with st.expander(f"👤 {idx}. {emp_name} — *{emp_pos}* ({emp_mail})"):
                             url_linkedin = f"https://www.google.com/search?q=site%3alinkedin.com%2fin%2F+%22{emp_name}%22+AND+%22{brand_query}%22"
-                            url_social = f"https://www.google.com/search?q=%28site%3ainstagram.com+OR+site%3afacebook.com+OR+site%3aiktok.com%29+%22{emp_name}%22+AND+%22{brand_query}%22"
+                            url_social = f"https://www.google.com/search?q=%28site%3ainstagram.com+OR+site%3afacebook.com+OR+site%3atiktok.com%29+%22{emp_name}%22+AND+%22{brand_query}%22"
                             url_github = f"https://www.google.com/search?q=%28site%3agithub.com+OR+site%3agitlab.com%29+%22{emp_name}%22"
-                            url_docs = f"https://www.google.com/search?q=site%3a{dork_target}+filetype%3apdf+AND+%22{emp_name}%22"
-                            url_sheets = f"https://www.google.com/search?q=site%3a{dork_target}+%28filetype%3axlsx+OR+filetype%3acsv+OR+filetype%3axls%29+%22{emp_name}%22"
+                            url_docs = f"https://www.google.com/search?q=site%3a{clean_target}+filetype%3apdf+AND+%22{emp_name}%22"
+                            url_sheets = f"https://www.google.com/search?q=site%3a{clean_target}+%28filetype%3axlsx+OR+filetype%3acsv+OR+filetype%3axls%29+%22{emp_name}%22"
                             url_cv = f"https://www.google.com/search?q=%22{emp_name}%22+AND+%22{brand_query}%22+AND+%28%22curriculum%22+OR+%22CV%22+OR+%22formazione%22+OR+%22relatore%22%29"
 
                             rc1, rc2 = st.columns(2)
@@ -767,7 +668,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
                                 st.markdown(f'<div class="dork-btn"><a href="{url_sheets}" target="_blank">📊 Fogli di Calcolo (XLSX/CSV)</a></div>', unsafe_allow_html=True)
                                 st.markdown(f'<div class="dork-btn"><a href="{url_cv}" target="_blank">📜 CV & Background Storico</a></div>', unsafe_allow_html=True)
             else:
-                st.info("Nessun dipendente disponibile per il Dorking.")
+                st.info("Nessun dipendente disponibile.")
 
             st.divider()
 
