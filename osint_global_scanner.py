@@ -435,47 +435,48 @@ class PassiveReconGlobal:
         return result
 
     @staticmethod
-    def get_hunter_domain_search(domain: str, api_key: str, limit: int = 100) -> Dict:
+    def get_hunter_domain_search(domain: str, api_key: str, limit: int = 10) -> Dict:
         result_data = {"organization": "N/D", "pattern": "N/D", "emails": []}
         if not api_key:
             return result_data
 
-        limits_to_try = [limit, 10]
-        for current_limit in limits_to_try:
-            try:
-                url = f"https://api.hunter.io/v2/domain-search?domain={domain}&limit={current_limit}&api_key={api_key}"
-                response = requests.get(url, timeout=12)
-                if response.status_code == 200:
-                    res_json = response.json()
-                    data = res_json.get("data", {})
-                    if data:
-                        result_data["organization"] = data.get("organization", "N/D")
-                        result_data["pattern"] = data.get("pattern", "N/D")
-                        raw_emails = data.get("emails", [])
-                        formatted_emails = []
-                        for e in raw_emails:
-                            fname = e.get("first_name") or ""
-                            lname = e.get("last_name") or ""
-                            full_name = f"{fname} {lname}".strip()
-                            if not full_name:
-                                full_name = "N/D"
+        url = f"https://api.hunter.io/v2/domain-search?domain={domain}&limit={limit}&api_key={api_key}"
+        try:
+            response = requests.get(url, timeout=12)
+            if response.status_code == 200:
+                res_json = response.json()
+                data = res_json.get("data", {})
+                if data:
+                    result_data["organization"] = data.get("organization", "N/D")
+                    result_data["pattern"] = data.get("pattern", "N/D")
+                    raw_emails = data.get("emails", [])
+                    formatted_emails = []
+                    for e in raw_emails:
+                        fname = e.get("first_name") or ""
+                        lname = e.get("last_name") or ""
+                        full_name = f"{fname} {lname}".strip()
+                        if not full_name:
+                            full_name = "N/D"
 
-                            formatted_emails.append({
-                                "email": e.get("value"),
-                                "name": full_name,
-                                "position": e.get("position", "N/D"),
-                                "confidence": e.get("confidence", 0),
-                                "type": e.get("type", "N/D")
-                            })
-                        result_data["emails"] = formatted_emails
-                    return result_data
-                elif response.status_code == 400 and current_limit != 10:
-                    continue
-                else:
-                    break
-            except Exception:
-                pass
-        return result_data
+                        formatted_emails.append({
+                            "email": e.get("value"),
+                            "name": full_name,
+                            "position": e.get("position", "N/D"),
+                            "confidence": e.get("confidence", 0),
+                            "type": e.get("type", "N/D")
+                        })
+                    result_data["emails"] = formatted_emails
+                return result_data
+            else:
+                try:
+                    err_details = response.json().get("errors", [{}])[0].get("details", response.text)
+                except Exception:
+                    err_details = response.text
+                st.error(f"❌ Errore Hunter.io [Status {response.status_code}]: {err_details}")
+                return result_data
+        except Exception as ex:
+            st.error(f"❌ Eccezione Hunter.io: {str(ex)}")
+            return result_data
 
     @staticmethod
     def get_hunter_companies_find(domain: str, api_key: str) -> Dict:
@@ -604,7 +605,7 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
 
             st.divider()
 
-            # --- FASE 1: DATI PUBBLICI E EMAIL (Corretto per evitare DeltaGenerator) ---
+            # --- FASE 1: DATI PUBBLICI E EMAIL ---
             st.subheader("🌐 Fase 1: Ricognizione & Sicurezza Email")
             st.markdown("**Server MX:**")
             if dns_info["mx"]:
@@ -725,4 +726,117 @@ if st.sidebar.button("🚀 Avvia Analisi Completa", type="primary"):
             else:
                 st.info("Nessun sottodominio trovato.")
 else:
-    st.info("👈 Inserisci un dominio target nella barra laterale e avvia l'analisi.")
+    st.info("👈 Inserisci un dominio target nella barra laterale o utilizza i moduli di ricerca manuale qui sotto.")
+
+# --- NUOVI MODULI: OSINT NOMINATIVO & EMAIL INVERSO INDIPENDENTI ---
+st.divider()
+st.subheader("🔎 OSINT Avanzato: Ricerca Manuale per Nominativo & Email")
+st.markdown("Esegui ricerche mirate e multi-motore (**Google, DuckDuckGo, Yandex**) partendo da una persona o da un indirizzo email specifico indipendentemente dal dominio.")
+
+tab_nominativo, tab_email = st.tabs(["👤 Ricerca per Nominativo", "✉️ Ricerca per Email"])
+
+# --- TAB 1: RICERCA PER NOMINATIVO ---
+with tab_nominativo:
+    st.markdown("#### Ricerca Social & Tracce Digitali per Persona")
+    col_n1, col_n2, col_n3 = st.columns(3)
+    with col_n1:
+        input_nome = st.text_input("Nome", placeholder="es. Mario", key="osint_nome_manual")
+    with col_n2:
+        input_cognome = st.text_input("Cognome", placeholder="es. Rossi", key="osint_cognome_manual")
+    with col_n3:
+        input_contesto = st.text_input("Contesto (Opzionale)", placeholder="es. Azienda o Città", key="osint_contesto_manual")
+
+    if st.button("🚀 Avvia Dork Nominativo", key="btn_dork_nome_manual"):
+        if not input_nome and not input_cognome:
+            st.warning("⚠️ Inserisci almeno il nome o il cognome.")
+        else:
+            c_nome = input_nome.strip()
+            c_cognome = input_cognome.strip()
+            c_ctx = input_contesto.strip()
+
+            query_base = f'"{c_nome} {c_cognome}"'
+            if c_ctx:
+                query_base += f' AND "{c_ctx}"'
+
+            st.markdown(f"Risultati generati per: **{c_nome} {c_cognome}** {f'({c_ctx})' if c_ctx else ''}")
+
+            piattaforme_social = [
+                {"nome": "LinkedIn (Professionale)", "dork": "site:linkedin.com/in/"},
+                {"nome": "Instagram (Foto & Storie)", "dork": "site:instagram.com"},
+                {"nome": "Facebook (Social Network)", "dork": "site:facebook.com"},
+                {"nome": "X / Twitter", "dork": "site:twitter.com OR site:x.com"},
+                {"nome": "TikTok (Video)", "dork": "site:tiktok.com"},
+                {"nome": "GitHub / GitLab (Sviluppatori)", "dork": "site:github.com OR site:gitlab.com"},
+                {"nome": "Telegram (Canali)", "dork": "site:t.me"}
+            ]
+
+            for item in piattaforme_social:
+                p_nome = item["nome"]
+                p_dork = item["dork"]
+                full_q = f"{p_dork} {query_base}"
+
+                url_g = f"https://www.google.com/search?q={requests.utils.quote(full_q)}"
+                url_ddg = f"https://duckduckgo.com/?q={requests.utils.quote(full_q)}"
+                url_yan = f"https://yandex.com/search/?text={requests.utils.quote(full_q)}"
+
+                with st.expander(f"📌 {p_nome}"):
+                    st.code(full_q, language="text")
+                    sc1, sc2, sc3 = st.columns(3)
+                    with sc1:
+                        st.markdown(f'<div class="dork-btn"><a href="{url_g}" target="_blank">🌐 Google</a></div>', unsafe_allow_html=True)
+                    with sc2:
+                        st.markdown(f'<div class="dork-btn"><a href="{url_ddg}" target="_blank">🦆 DuckDuckGo</a></div>', unsafe_allow_html=True)
+                    with sc3:
+                        st.markdown(f'<div class="dork-btn"><a href="{url_yan}" target="_blank">🟡 Yandex</a></div>', unsafe_allow_html=True)
+
+# --- TAB 2: RICERCA PER EMAIL ---
+with tab_email:
+    stringa_email = st.text_input("Indirizzo Email da analizzare", placeholder="es. m.rossi@dominio.com", key="osint_email_manual")
+
+    if st.button("🔍 Avvia Dork Email", key="btn_dork_email_manual"):
+        if not stringa_email or "@" not in stringa_email:
+            st.warning("⚠️ Inserisci un indirizzo email valido.")
+        else:
+            clean_mail = stringa_email.strip().lower()
+            local_u = clean_mail.split('@')[0]
+
+            st.markdown(f"Risultati e tracce per l'email: `{clean_mail}`")
+
+            q_exact = f'"{clean_mail}"'
+            url_eg = f"https://www.google.com/search?q={requests.utils.quote(q_exact)}"
+            url_eddg = f"https://duckduckgo.com/?q={requests.utils.quote(q_exact)}"
+            url_eyan = f"https://yandex.com/search/?text={requests.utils.quote(q_exact)}"
+
+            st.markdown("##### Ricerca Web dell'Email Esatta")
+            ec1, ec2, ec3 = st.columns(3)
+            with ec1:
+                st.markdown(f'<div class="dork-btn"><a href="{url_eg}" target="_blank">🌐 Google (Esatta)</a></div>', unsafe_allow_html=True)
+            with ec2:
+                st.markdown(f'<div class="dork-btn"><a href="{url_eddg}" target="_blank">🦆 DuckDuckGo (Esatta)</a></div>', unsafe_allow_html=True)
+            with ec3:
+                st.markdown(f'<div class="dork-btn"><a href="{url_eyan}" target="_blank">🟡 Yandex (Esatta)</a></div>', unsafe_allow_html=True)
+
+            st.markdown("##### Dork su Piattaforme Specifiche")
+            email_dorks = [
+                {"name": "GitHub & GitLab (Commit e Codice)", "query": f'site:github.com OR site:gitlab.com "{clean_mail}"'},
+                {"name": "Pastebin & Dump Sites (Eventuali Leak)", "query": f'site:pastebin.com OR site:ghostbin.co OR site:controlc.com "{clean_mail}"'},
+                {"name": "Twitter / X (Menzioni)", "query": f'site:twitter.com OR site:x.com "{clean_mail}"'},
+                {"name": "Username Check (Cerca solo la parte iniziale dell'email)", "query": f'"{local_u}"'}
+            ]
+
+            for item in email_dorks:
+                d_name = item["name"]
+                d_query = item["query"]
+                url_gdork = f"https://www.google.com/search?q={requests.utils.quote(d_query)}"
+
+                with st.expander(f"📌 {d_name}"):
+                    st.code(d_query, language="text")
+                    st.markdown(f'<div class="dork-btn"><a href="{url_gdork}" target="_blank">🔎 Cerca su Google</a></div>', unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown(
+                """
+                💡 **Consigli extra per l'email:**
+                * Verifica se l'email è compromessa su **[Have I Been Pwned](https://haveibeenpwned.com/)**.
+                """
+            )
